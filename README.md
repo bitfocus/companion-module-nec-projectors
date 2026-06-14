@@ -82,8 +82,10 @@ _Appendixes_.
   standard code, falls back to the alternate if the projector rejects it, and remembers which
   one works. Use **Custom** for anything not listed.
 - **Powering on from standby over the network** needs the projector's _Standby Mode_ set to
-  allow network commands (e.g. _Network Standby_ / _Normal_). In a deep power-saving standby,
-  some models won't respond until woken another way.
+  allow network commands (e.g. _Network Standby_ / _Normal_). Most NEC projectors also turn
+  **Wi-Fi off in standby**, so power-on usually works only over a **wired (Ethernet)**
+  connection — Wi-Fi is fine once the projector is on, it just can't wake it. In a deep
+  power-saving standby, some models won't respond at all until woken another way.
 - **Not every command exists on every model** (e.g. lens, shutter, edge blending). Unsupported
   commands are safely ignored and won't break the connection.
 - **Not Sharp's own projectors.** This module is for NEC / Sharp NEC NP-series projectors. Sharp's

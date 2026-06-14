@@ -18,9 +18,14 @@ This works with NEC projectors (the **"NP" series**, including models now brande
 
 ### Turning the projector on over the network
 
-Some projectors ignore a network "power on" while in deep standby. If power-on doesn't
-work, set the projector's **Standby Mode** to **Network Standby** (or **Normal**) in its
+To turn the projector **on** over the network, it has to keep its network awake while in
+standby — set the projector's **Standby Mode** to **Network Standby** (or **Normal**) in its
 own menu.
+
+**Use a wired (Ethernet) connection if you need power-on.** Most NEC projectors switch their
+**Wi-Fi off in standby**, so a power-on command sent over Wi-Fi usually won't reach the
+projector. Wired LAN stays awake in standby. (Once the projector is on, Wi-Fi is fine for
+everything — this only affects waking it up.)
 
 ### Choosing an input
 
