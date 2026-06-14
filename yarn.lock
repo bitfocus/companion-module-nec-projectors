@@ -1492,9 +1492,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"nec-projector@workspace:.":
+"nec-projectors@workspace:.":
   version: 0.0.0-use.local
-  resolution: "nec-projector@workspace:."
+  resolution: "nec-projectors@workspace:."
   dependencies:
     "@companion-module/base": "npm:2.0.4"
     "@companion-module/tools": "npm:^3.0.1"

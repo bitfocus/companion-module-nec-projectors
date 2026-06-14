@@ -1,10 +1,10 @@
 {
 	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
 	"type": "connection",
-	"id": "nec-projector",
-	"name": "nec-projector",
-	"shortname": "NEC Projector",
-	"description": "Control and monitor NEC / Sharp NEC projectors over HTTP (IsapiExtPj.dll control-command protocol). Power, input, mutes, freeze, shutter, lens, eco mode and more, with polled feedback variables.",
+	"id": "nec-projectors",
+	"name": "nec-projectors",
+	"shortname": "NEC Projectors",
+	"description": "Control and monitor NEC projectors over HTTP (IsapiExtPj.dll control-command protocol). Power, input, mutes, freeze, shutter, lens, eco mode and more, with polled feedback variables.",
 	"version": "1.0.0",
 	"license": "MIT",
 	"repository": "git+https://github.com/matteasterday/companion-module-NEC-Projector.git",
@@ -23,7 +23,7 @@
 	},
 	"legacyIds": [],
 	"manufacturer": "NEC",
-	"products": ["Projector"],
+	"products": ["Projectors"],
 	"keywords": [
 		"projector",
 		"NEC",

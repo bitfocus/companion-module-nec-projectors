@@ -1,9 +1,9 @@
 {
-	"name": "nec-projector",
+	"name": "nec-projectors",
 	"version": "1.0.0",
 	"main": "dist/main.js",
 	"type": "module",
-	"description": "Control and monitor NEC / Sharp NEC projectors over their HTTP control interface (IsapiExtPj.dll binary command protocol), with polled feedback variables.",
+	"description": "Control and monitor NEC projectors over their HTTP control interface (IsapiExtPj.dll binary command protocol), with polled feedback variables.",
 	"scripts": {
 		"postinstall": "husky",
 		"format": "prettier -w .",

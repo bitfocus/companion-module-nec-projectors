@@ -58,8 +58,8 @@ challenge-response scheme) and re-authenticates if the session drops.
 
 ## Supported projectors
 
-Works with NEC / Sharp NEC **NP-series** projectors that have a wired (or wireless) LAN
-connection and the classic "Projector LAN Control" web page. This covers essentially the whole
+Works with NEC **NP-series** projectors that have a wired (or wireless) LAN connection and
+the classic "Projector LAN Control" web page. This covers essentially the whole
 NEC NP line from ~2014 onward, including:
 
 - **NP4100 / NP4100W**
