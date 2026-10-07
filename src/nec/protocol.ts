@@ -109,7 +109,7 @@ const ERROR_CODES: Record<string, string> = {
 	'02,0f': 'There is no authority necessary for the operation',
 	'03,00': 'The specified gain number is incorrect',
 	'03,01': 'The specified gain is invalid',
-	'03,02': 'The projector cannot execute this in its current state (for power: it is still warming up or cooling down)',
+	'03,02': 'The projector cannot execute this in its current state (e.g. warming up, cooling down, or no signal)',
 }
 
 /** Decode an (err1, err2) pair into a human-readable string. */

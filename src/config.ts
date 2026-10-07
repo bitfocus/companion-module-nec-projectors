@@ -74,7 +74,7 @@ export function GetConfigFields(): SomeCompanionConfigField[] {
 			id: 'powerOffLockout',
 			label: 'Power off lockout after power on (seconds)',
 			width: 4,
-			default: 90,
+			default: 65,
 			min: 0,
 			max: 600,
 			tooltip:

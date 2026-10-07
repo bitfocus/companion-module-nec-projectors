@@ -4,7 +4,7 @@ import type { ModuleConfig } from './config.js'
 const addPowerOffLockout: CompanionStaticUpgradeScript<ModuleConfig> = (_context, props) => {
 	const result = { updatedConfig: null as ModuleConfig | null, updatedActions: [], updatedFeedbacks: [] }
 	if (props.config && typeof (props.config as Partial<ModuleConfig>).powerOffLockout !== 'number') {
-		result.updatedConfig = { ...props.config, powerOffLockout: 90 }
+		result.updatedConfig = { ...props.config, powerOffLockout: 65 }
 	}
 	return result
 }

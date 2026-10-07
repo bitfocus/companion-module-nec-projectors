@@ -21,7 +21,7 @@ import {
 	decodeSerial,
 	type ProjectorState,
 } from './nec/decode.js'
-import type { NecResponse } from './nec/protocol.js'
+import { toHex, type NecResponse } from './nec/protocol.js'
 
 export type ModuleSchema = {
 	config: ModuleConfig
@@ -192,23 +192,23 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 
 	private commandsInFlight = new Set<string>()
 
-	/** Send a control command; refresh state shortly after. Used by all actions. */
-	async sendCommand(bytes: number[], label: string): Promise<void> {
-		if (!this.client) return
+	/** Send a control command; refresh state shortly after. Used by all actions. Resolves true if the projector accepted it. */
+	async sendCommand(bytes: number[], label: string): Promise<boolean> {
+		if (!this.client) return false
 		if (this.commandsInFlight.has(label)) {
 			this.log('debug', `${label}: already in progress, extra press ignored`)
-			return
+			return false
 		}
 		this.commandsInFlight.add(label)
 		try {
-			await this.sendCommandOnce(bytes, label)
+			return await this.sendCommandOnce(bytes, label)
 		} finally {
 			this.commandsInFlight.delete(label)
 		}
 	}
 
-	private async sendCommandOnce(bytes: number[], label: string): Promise<void> {
-		if (!this.client) return
+	private async sendCommandOnce(bytes: number[], label: string): Promise<boolean> {
+		if (!this.client) return false
 		try {
 			const res = await this.client.send(bytes)
 			if (!res.ok) {
@@ -224,6 +224,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			}
 			this.markReachable()
 			this.scheduleRefresh()
+			return res.ok
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e)
 			this.noteError(`${label}: ${msg}`)
@@ -234,6 +235,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 				)
 			}
 			this.handleTransportError(e, label)
+			return false
 		}
 	}
 
@@ -252,22 +254,31 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 				const res = await this.client.send(cmd.inputSwitch(code))
 				if (res.ok) {
 					if (useCache) this.inputWinners.set(logical, code)
+					this.clearError()
 					this.markReachable()
 					this.scheduleRefresh()
 					return
 				}
 				// Only try the next candidate if this code was rejected as invalid.
 				if (res.err1 !== 0x01) {
-					if (res.err1 === 0x02 && res.err2 === 0x0d) this.log('debug', 'Input: projector power is off')
-					else this.log('warn', `Input select failed: ${res.errorText ?? 'NACK'}`)
+					if (res.err1 === 0x02 && res.err2 === 0x0d) {
+						this.log('debug', 'Input: projector power is off')
+						this.noteError('Input select: projector power is off')
+					} else {
+						this.log('warn', `Input select failed: ${res.errorText ?? 'NACK'}`)
+						this.noteError(`Input select failed: ${res.errorText ?? 'NACK'}`)
+					}
 					this.markReachable()
 					this.scheduleRefresh()
 					return
 				}
 			}
-			this.log('warn', `Input select: projector did not accept any known code for "${logical}"`)
+			const what = useCache ? logical : `code ${codes.map(toHex).join('/')}`
+			this.log('warn', `Input select: projector did not accept ${what}`)
+			this.noteError(`Input select failed: projector did not accept ${what}`)
 			this.markReachable()
 		} catch (e) {
+			this.noteError(`Input select: ${e instanceof Error ? e.message : String(e)}`)
 			this.handleTransportError(e, 'Input select')
 		}
 	}
@@ -294,7 +305,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	private trackPowerOffLockout(before: number, after: number): void {
 		const POWER_ON = 0x04
 		if (after === POWER_ON && before !== POWER_ON && before !== -1) {
-			const seconds = Math.max(0, this.config.powerOffLockout ?? 90)
+			const seconds = Math.max(0, this.config.powerOffLockout ?? 65)
 			this.state.powerOffLockedUntil = seconds > 0 ? Date.now() + seconds * 1000 : 0
 			if (seconds > 0) this.log('debug', `Lamp reached Power On; power off locked out for ${seconds}s`)
 		} else if (after !== POWER_ON && !isWarming(after)) {
