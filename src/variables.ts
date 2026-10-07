@@ -25,6 +25,10 @@ export type VariablesSchema = {
 	errors: string
 	sync_h: string
 	sync_v: string
+	power_off_locked: string
+	power_off_in: string
+	last_error: string
+	last_error_age: string
 }
 
 export function UpdateVariableDefinitions(self: ModuleInstance): void {
@@ -35,6 +39,10 @@ export function UpdateVariableDefinitions(self: ModuleInstance): void {
 		mac: { name: 'MAC address' },
 		power: { name: 'Power (On / Off)' },
 		operation_status: { name: 'Operation status' },
+		power_off_locked: { name: 'Power off currently refused because the lamp just came on (true / false)' },
+		power_off_in: { name: 'Seconds until power off will be accepted (empty when not locked)' },
+		last_error: { name: 'Last command the projector refused, or empty after a success' },
+		last_error_age: { name: 'Seconds since the last refusal (empty when none)' },
 		content: { name: 'Content displayed' },
 		input: { name: 'Active input (name)' },
 		input_code: { name: 'Active input (raw terminal code)' },
@@ -65,6 +73,11 @@ export function buildVariableValues(state: ProjectorState): VariablesSchema {
 		mac: state.mac || '—',
 		power: state.powered ? 'On' : 'Off',
 		operation_status: state.operationStatus,
+		power_off_locked: state.powerOffLockedUntil > Date.now() ? 'true' : 'false',
+		power_off_in:
+			state.powerOffLockedUntil > Date.now() ? String(Math.ceil((state.powerOffLockedUntil - Date.now()) / 1000)) : '',
+		last_error: state.lastError,
+		last_error_age: state.lastError ? String(Math.round((Date.now() - state.lastErrorAt) / 1000)) : '',
 		content: state.content || '—',
 		input: state.inputName || '—',
 		input_code: state.inputType2 ? toHex(state.inputType2) : '—',

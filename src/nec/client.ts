@@ -29,10 +29,31 @@ export interface NecClientOptions {
 /** Thrown when an HTTP request fails or times out (i.e. the projector is unreachable). */
 export class NecTransportError extends Error {}
 
+/** How long to leave the projector alone after it answers 503 (its web server is overloaded). */
+const BUSY_BACKOFF_MS = 20000
+/** Minimum gap between consecutive requests; the embedded server copes badly with back-to-back hits. */
+const MIN_GAP_MS = 60
+
 export class NecClient {
 	private cookies = new Map<string, string>()
 	private authed = false
 	private cacheBuster = 0
+	/** All traffic to the projector goes through this chain, one request at a time. */
+	private chain: Promise<unknown> = Promise.resolve()
+	private lastRequestAt = 0
+	private busyUntil = 0
+
+	/** Run `fn` after every previously queued request has finished. */
+	private async queue<T>(fn: () => Promise<T>): Promise<T> {
+		const run = this.chain.then(fn, fn)
+		this.chain = run.catch(() => undefined)
+		return run
+	}
+
+	/** Milliseconds until the projector may be contacted again, or 0. */
+	busyFor(): number {
+		return Math.max(0, this.busyUntil - Date.now())
+	}
 
 	constructor(private opts: NecClientOptions) {}
 
@@ -52,6 +73,13 @@ export class NecClient {
 
 	/** Perform a raw GET against the CGI and return the body text. */
 	private async http(query: string): Promise<string> {
+		const busy = this.busyFor()
+		if (busy > 0) {
+			throw new NecTransportError(`web server overloaded, waiting ${Math.ceil(busy / 1000)}s`)
+		}
+		const gap = MIN_GAP_MS - (Date.now() - this.lastRequestAt)
+		if (gap > 0) await new Promise((resolve) => setTimeout(resolve, gap))
+		this.lastRequestAt = Date.now()
 		const url = `${this.base}?${query}`
 		let res: Response
 		try {
@@ -61,9 +89,16 @@ export class NecClient {
 				signal: AbortSignal.timeout(this.opts.timeoutMs),
 			})
 		} catch (e) {
-			throw new NecTransportError(e instanceof Error ? e.message : String(e))
+			const msg = e instanceof Error ? e.message : String(e)
+			const timedOut = (e instanceof Error && e.name === 'TimeoutError') || /abort|timeout/i.test(msg)
+			throw new NecTransportError(timedOut ? 'not answering on the network' : msg)
 		}
 		this.storeCookies(res)
+		if (res.status === 503 || res.status === 502) {
+			this.busyUntil = Date.now() + BUSY_BACKOFF_MS
+			this.authed = false
+			throw new NecTransportError(`web server overloaded (HTTP ${res.status}), waiting ${BUSY_BACKOFF_MS / 1000}s`)
+		}
 		if (!res.ok) throw new NecTransportError(`HTTP ${res.status}`)
 		return await res.text()
 	}
@@ -91,6 +126,10 @@ export class NecClient {
 
 	/** Perform the password handshake. No-op when no password is configured. */
 	async logon(): Promise<void> {
+		return this.queue(async () => this.logonUnqueued())
+	}
+
+	private async logonUnqueued(): Promise<void> {
 		if (!this.needsAuth) {
 			this.authed = true
 			return
@@ -128,15 +167,17 @@ export class NecClient {
 
 	/** Send a command (bytes without length/checksum) and return the parsed response. */
 	async send(commandBytes: number[]): Promise<NecResponse> {
-		if (this.needsAuth && !this.authed) await this.logon()
-		let res = await this.sendOnce(commandBytes)
-		// Retry once if the session expired (err 02 0F = no authority).
-		if (this.needsAuth && !res.ok && res.err1 === 0x02 && res.err2 === 0x0f) {
-			this.authed = false
-			await this.logon()
-			res = await this.sendOnce(commandBytes)
-		}
-		return res
+		return this.queue(async () => {
+			if (this.needsAuth && !this.authed) await this.logonUnqueued()
+			let res = await this.sendOnce(commandBytes)
+			// Retry once if the session expired (err 02 0F = no authority).
+			if (this.needsAuth && !res.ok && res.err1 === 0x02 && res.err2 === 0x0f) {
+				this.authed = false
+				await this.logonUnqueued()
+				res = await this.sendOnce(commandBytes)
+			}
+			return res
+		})
 	}
 
 	private async sendOnce(commandBytes: number[]): Promise<NecResponse> {

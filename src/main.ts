@@ -7,6 +7,7 @@ import { UpdateFeedbacks, type FeedbacksSchema } from './feedbacks.js'
 import { UpdatePresets } from './presets.js'
 import { NecClient, NecTransportError, type NecClientOptions } from './nec/client.js'
 import * as cmd from './nec/commands.js'
+import { isCooling, isWarming } from './nec/constants.js'
 import {
 	blankState,
 	decodeBasicInfo,
@@ -20,7 +21,7 @@ import {
 	decodeSerial,
 	type ProjectorState,
 } from './nec/decode.js'
-import type { NecResponse } from './nec/protocol.js'
+import { toHex, type NecResponse } from './nec/protocol.js'
 
 export type ModuleSchema = {
 	config: ModuleConfig
@@ -140,7 +141,9 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		this.pollInFlight = true
 		try {
 			if (!this.staticFetched) await this.fetchStatic()
+			const before = this.state.operationStatusCode
 			await this.apply(cmd.reqBasicInfo(), decodeBasicInfo)
+			this.trackPowerOffLockout(before, this.state.operationStatusCode)
 			await this.apply(cmd.reqLampInfo(0x00, 0x04), decodeLamp)
 			await this.apply(cmd.reqLampInfo(0x00, 0x01), decodeLamp)
 			await this.apply(cmd.reqFilterInfo(), decodeFilter)
@@ -187,22 +190,52 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 
 	// --------------------------------------------------------------- commands
 
-	/** Send a control command; refresh state shortly after. Used by all actions. */
-	async sendCommand(bytes: number[], label: string): Promise<void> {
-		if (!this.client) return
+	private commandsInFlight = new Set<string>()
+
+	/** Send a control command; refresh state shortly after. Used by all actions. Resolves true if the projector accepted it. */
+	async sendCommand(bytes: number[], label: string): Promise<boolean> {
+		if (!this.client) return false
+		if (this.commandsInFlight.has(label)) {
+			this.log('debug', `${label}: already in progress, extra press ignored`)
+			return false
+		}
+		this.commandsInFlight.add(label)
+		try {
+			return await this.sendCommandOnce(bytes, label)
+		} finally {
+			this.commandsInFlight.delete(label)
+		}
+	}
+
+	private async sendCommandOnce(bytes: number[], label: string): Promise<boolean> {
+		if (!this.client) return false
 		try {
 			const res = await this.client.send(bytes)
 			if (!res.ok) {
 				if (res.err1 === 0x02 && res.err2 === 0x0d) {
 					this.log('debug', `${label}: ignored — projector power is off`)
+					this.noteError(`${label}: projector power is off`)
 				} else {
 					this.log('warn', `${label} failed: ${res.errorText ?? 'NACK'}`)
+					this.noteError(`${label} failed: ${res.errorText ?? 'NACK'}`)
 				}
+			} else {
+				this.clearError()
 			}
 			this.markReachable()
 			this.scheduleRefresh()
+			return res.ok
 		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e)
+			this.noteError(`${label}: ${msg}`)
+			if (/not answering/i.test(msg)) {
+				this.log(
+					'warn',
+					`${label}: no reply from the projector. If it is in standby, set Standby Mode to Network Standby so it can be woken over LAN.`,
+				)
+			}
 			this.handleTransportError(e, label)
+			return false
 		}
 	}
 
@@ -221,22 +254,31 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 				const res = await this.client.send(cmd.inputSwitch(code))
 				if (res.ok) {
 					if (useCache) this.inputWinners.set(logical, code)
+					this.clearError()
 					this.markReachable()
 					this.scheduleRefresh()
 					return
 				}
 				// Only try the next candidate if this code was rejected as invalid.
 				if (res.err1 !== 0x01) {
-					if (res.err1 === 0x02 && res.err2 === 0x0d) this.log('debug', 'Input: projector power is off')
-					else this.log('warn', `Input select failed: ${res.errorText ?? 'NACK'}`)
+					if (res.err1 === 0x02 && res.err2 === 0x0d) {
+						this.log('debug', 'Input: projector power is off')
+						this.noteError('Input select: projector power is off')
+					} else {
+						this.log('warn', `Input select failed: ${res.errorText ?? 'NACK'}`)
+						this.noteError(`Input select failed: ${res.errorText ?? 'NACK'}`)
+					}
 					this.markReachable()
 					this.scheduleRefresh()
 					return
 				}
 			}
-			this.log('warn', `Input select: projector did not accept any known code for "${logical}"`)
+			const what = useCache ? logical : `code ${codes.map(toHex).join('/')}`
+			this.log('warn', `Input select: projector did not accept ${what}`)
+			this.noteError(`Input select failed: projector did not accept ${what}`)
 			this.markReachable()
 		} catch (e) {
+			this.noteError(`Input select: ${e instanceof Error ? e.message : String(e)}`)
 			this.handleTransportError(e, 'Input select')
 		}
 	}
@@ -251,6 +293,53 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	private scheduleRefresh(): void {
 		if (this.refreshTimer) clearTimeout(this.refreshTimer)
 		this.refreshTimer = setTimeout(() => void this.poll(), 700)
+	}
+
+	// --------------------------------------------------------------- power off lockout
+
+	/**
+	 * Projectors refuse a power off for a while after the lamp reaches Power On.
+	 * Start the lockout window the moment the status changes to Power On, and clear
+	 * it whenever the projector is no longer on.
+	 */
+	private trackPowerOffLockout(before: number, after: number): void {
+		const POWER_ON = 0x04
+		if (after === POWER_ON && before !== POWER_ON && before !== -1) {
+			const seconds = Math.max(0, this.config.powerOffLockout ?? 65)
+			this.state.powerOffLockedUntil = seconds > 0 ? Date.now() + seconds * 1000 : 0
+			if (seconds > 0) this.log('debug', `Lamp reached Power On; power off locked out for ${seconds}s`)
+		} else if (after !== POWER_ON && !isWarming(after)) {
+			this.state.powerOffLockedUntil = 0
+		}
+	}
+
+	/** Record a refusal so buttons and the web remote can show it; published on the next poll or immediately. */
+	noteError(text: string): void {
+		this.state.lastError = text
+		this.state.lastErrorAt = Date.now()
+		this.publish()
+	}
+
+	clearError(): void {
+		if (!this.state.lastError) return
+		this.state.lastError = ''
+		this.state.lastErrorAt = 0
+		this.publish()
+	}
+
+	/** Why a power on would be refused right now, or null if it can be sent. */
+	powerOnRefusal(): string | null {
+		if (isCooling(this.state.operationStatusCode)) return 'still cooling down'
+		return null
+	}
+
+	/** Why a power off would be refused right now, or null if it can be sent. */
+	powerOffRefusal(): string | null {
+		if (isWarming(this.state.operationStatusCode)) return 'still warming up'
+		if (isCooling(this.state.operationStatusCode)) return 'already cooling down'
+		const left = this.state.powerOffLockedUntil - Date.now()
+		if (left > 0) return `too soon after turning on, ${Math.ceil(left / 1000)}s to go`
+		return null
 	}
 
 	// --------------------------------------------------------------- helpers
@@ -276,6 +365,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			'power_on',
 			'power_warming',
 			'power_cooling',
+			'power_off_locked',
 			'input_active',
 			'picture_mute',
 			'sound_mute',

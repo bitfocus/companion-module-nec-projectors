@@ -84,6 +84,8 @@ export const INPUT_NAME_CHOICES: Choice[] = [
  */
 export function decodeInputName(type1: number, type2: number): string {
 	switch (type2) {
+		case 0x00:
+			return '' // briefly reported while entering standby
 		case 0x01:
 			return type1 >= 2 ? `VGA Comp ${type1}` : 'VGA Comp 1'
 		case 0x02:
@@ -92,10 +94,11 @@ export function decodeInputName(type1: number, type2: number): string {
 			return 'S-Video'
 		case 0x04:
 			return 'Component'
+		// 06h and 07h are families; type1 picks the terminal (verified on a PA550W: 1Ah -> 01 06, 1Bh -> 02 06, 1Fh -> 01 07, 20h -> 02 07).
 		case 0x06:
-			return 'HDMI'
+			return type1 === 2 ? 'DisplayPort' : 'HDMI'
 		case 0x07:
-			return 'Viewer'
+			return type1 === 2 ? 'Network' : 'Viewer'
 		case 0x20:
 			return 'DVI-D'
 		case 0x21:

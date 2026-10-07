@@ -53,10 +53,14 @@ const ADJUST_TYPE = [
 	{ id: 'absolute', label: 'Set to (exact value)' },
 ]
 
-/** Parse a hex string like "1A", "0x1a" or "26" into a byte. */
+/** Thrown for a custom code that is not a hex byte, so nothing is sent. */
+class BadHexError extends Error {}
+
+/** Parse a hex string like "1A", "0x1a" or "26" into a byte. Rejects anything else rather than sending 00h. */
 function parseHexByte(s: string): number {
-	const v = parseInt(String(s).trim().replace(/^0x/i, ''), 16)
-	return Number.isNaN(v) ? 0 : v & 0xff
+	const t = String(s).trim().replace(/^0x/i, '')
+	if (!/^[0-9a-f]{1,2}$/i.test(t)) throw new BadHexError(`"${s}" is not a hex byte (00 to FF)`)
+	return parseInt(t, 16)
 }
 
 /** Resolve a dropdown value that may be the CUSTOM sentinel into a numeric code. */
@@ -69,12 +73,18 @@ function resolveOnOff(mode: OnOffToggle, current: boolean): boolean {
 }
 
 export function UpdateActions(self: ModuleInstance): void {
-	self.setActionDefinitions({
+	const defs: Parameters<typeof self.setActionDefinitions>[0] = {
 		power: {
 			name: 'Power On / Off',
 			options: [{ type: 'dropdown', id: 'mode', label: 'Action', default: 'on', choices: ON_OFF_TOGGLE }],
 			callback: async (e) => {
 				const on = resolveOnOff(e.options.mode, self.state.powered)
+				const reason = on ? self.powerOnRefusal() : self.powerOffRefusal()
+				if (reason) {
+					self.log('warn', `Power ${on ? 'On' : 'Off'} refused: ${reason}`)
+					self.noteError(`Power ${on ? 'On' : 'Off'} refused: ${reason}`)
+					return
+				}
 				self.applyOptimistic({ powered: on })
 				await self.sendCommand(on ? cmd.powerOn() : cmd.powerOff(), `Power ${on ? 'On' : 'Off'}`)
 			},
@@ -158,9 +168,12 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (e) => {
-				const close = e.options.mode === 'toggle' ? !self.state.shutter : e.options.mode === 'close'
+				const was = self.state.shutter
+				const close = e.options.mode === 'toggle' ? !was : e.options.mode === 'close'
 				self.applyOptimistic({ shutter: close })
-				await self.sendCommand(cmd.shutter(close), `Shutter ${close ? 'Close' : 'Open'}`)
+				// Shutter is never read back, so undo the optimistic state if the projector refused it.
+				if (!(await self.sendCommand(cmd.shutter(close), `Shutter ${close ? 'Close' : 'Open'}`)))
+					self.applyOptimistic({ shutter: was })
 			},
 		},
 		picture_adjust: {
@@ -400,5 +413,20 @@ export function UpdateActions(self: ModuleInstance): void {
 				if (bytes.length > 0) await self.sendCommand(bytes, 'Raw command')
 			},
 		},
-	})
+	}
+	// A bad custom hex code refuses the press and says why, instead of sending 00h.
+	for (const def of Object.values(defs)) {
+		if (!def) continue
+		const callback = def.callback as (...args: unknown[]) => Promise<void>
+		def.callback = async (...args: unknown[]) => {
+			try {
+				await callback(...args)
+			} catch (e) {
+				if (!(e instanceof BadHexError)) throw e
+				self.log('warn', `${def.name}: ${e.message}`)
+				self.noteError(`${def.name}: ${e.message}`)
+			}
+		}
+	}
+	self.setActionDefinitions(defs)
 }
